@@ -65,6 +65,7 @@ type NewErrorFunc func({{ $data.ErrorHandler.Params }}) ({{ $data.ErrorHandler.R
 {{ end }}
 
 
+
 {{- range .InterFaces }}
 {{ if $data.ErrorHandler }}
 func New{{ .InterfaceName }}Server(i {{ .InterfaceName }}, errorHandler NewErrorFunc, opts ...ServerOption) (*Server, error){
@@ -86,6 +87,39 @@ func New{{ .InterfaceName }}Server(i {{ .InterfaceName }}, opts ...ServerOption)
 {{ end }}
 
 {{- end }}
+
+
+type mergedService struct {
+	e NewErrorFunc
+	{{- range $i, $a := .InterFaces }}
+	s{{ $i }} {{$a.InterfaceName }}
+	{{- end }}
+}
+func NewMergedService({{ if $data.ErrorHandler }} errorHandler NewErrorFunc {{ end }}, {{- range $i, $a := .InterFaces }} 
+s{{ $i }} {{$a.InterfaceName }}, 
+{{- end }} ) Handler {
+	return &mergedService{
+		{{ if $data.ErrorHandler }} e : errorHandler{{ end }},
+		{{- range $i, $a := .InterFaces }}
+		s{{ $i }} : s{{ $i }},
+		{{- end }}
+	}
+}
+
+{{- range $i, $a := .InterFaces }}
+{{- range .Methods }}
+func (s mergedService) {{ .MethodName }}( {{ .Params }} ) ({{ .Returns}}) {
+	return s.s{{ $i }}.{{ .MethodName }}({{ .ParamsWithoutTypes }})
+}
+{{- end }}
+{{- end }}
+
+{{ if $data.ErrorHandler }}
+func (i mergedService) NewError({{ $data.ErrorHandler.Params }}) ({{ $data.ErrorHandler.Returns }}) {
+	return i.e( {{ $data.ErrorHandler.ParamsWithoutTypes }} )
+}
+{{ end }}
+
 `
 
 func Generate(writeTo string, genInfo *GenInfo, packageName string) error {
