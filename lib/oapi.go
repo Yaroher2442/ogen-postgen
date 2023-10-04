@@ -43,7 +43,7 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 	docModel, buildModelErr := document.BuildV3Model()
 	if buildModelErr != nil {
 		for i := range buildModelErr {
-			log.Debug().Msgf("error: %e\n", buildModelErr[i])
+			log.Error().Msgf("error: %e\n", buildModelErr[i])
 			return nil, errors.New("cant parse model")
 		}
 	}
@@ -91,7 +91,6 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 						if tagNameP == tagName {
 							for _, method := range inter.Methods {
 								if strings.Contains(method.Comment, op.OperationId) && method.MethodName != "NewError" {
-									log.Debug().Msgf("tag: %s, method: %s, opname: %s, contains %s\n", tagName, method.MethodName, op.OperationId, strings.Contains(method.Comment, op.OperationId))
 									sepInter.Methods = append(sepInter.Methods, method)
 									readyParsedMethods = append(readyParsedMethods, method.MethodName)
 								}

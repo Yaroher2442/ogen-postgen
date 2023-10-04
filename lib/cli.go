@@ -22,12 +22,17 @@ var (
 
 func Run() int {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	if *Verbose {
+		log.Logger = log.Logger.Level(zerolog.DebugLevel)
+	} else {
+		log.Logger = log.Logger.Level(zerolog.InfoLevel)
+	}
 	_ = kingpin.MustParse(Commander.Parse(os.Args[1:]))
 	if *OgenFolder == "" {
 		log.Error().Msg("OgenFolder is not empty in args")
 		return 2
 	}
-	log.Debug().Msgf("OgenFolder: %s", *OgenFolder)
+	log.Info().Msgf("OgenFolder: %s", *OgenFolder)
 	interfaceDecl, parceErr := ParseInterface(path.Join(*OgenFolder, "oas_server_gen.go"), "Handler")
 	if parceErr != nil {
 		log.Error().Err(parceErr).Msg("failed parse ogen server file")
@@ -60,10 +65,10 @@ func Run() int {
 		}
 		fmt.Println(res)
 	}
-	log.Info().Msgf("write to %s", *OutFile)
 	if *OutFile == "" {
 		*OutFile = path.Join(*OgenFolder, "oas_postgen_services_gen.go")
 	}
+	log.Info().Msgf("write to %s", *OutFile)
 	generateErr := Generate(*OutFile, info, *PackageName)
 	if generateErr != nil {
 		log.Error().Err(generateErr).Msg("")
