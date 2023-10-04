@@ -4,6 +4,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/iancoleman/strcase"
 	"github.com/pb33f/libopenapi"
+	"github.com/pb33f/libopenapi/datamodel/high/base"
 	"github.com/rs/zerolog/log"
 	"github.com/samber/lo"
 	"os"
@@ -24,9 +25,9 @@ type SeparatedInterface struct {
 }
 
 type GenInfo struct {
-	Imports    []ImportInfo
-	InterFaces []SeparatedInterface
-	UnMatched  SeparatedInterface
+	Imports      []ImportInfo
+	InterFaces   []SeparatedInterface
+	ErrorHandler *ParsedInterfaceMethod
 }
 
 func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessType) (*GenInfo, error) {
@@ -49,52 +50,60 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 	genInfo := &GenInfo{
 		Imports:    inter.Imports,
 		InterFaces: make([]SeparatedInterface, 0),
-		UnMatched: SeparatedInterface{
-			InterfaceName: "UnmatchedMethodsHandler",
-			Methods:       make([]ParsedInterfaceMethod, 0),
-		},
 	}
+
 	readyParsedMethods := make([]string, 0)
 	switch procType {
 	case EachProc:
 		for _, method := range inter.Methods {
-			genInfo.InterFaces = append(genInfo.InterFaces, SeparatedInterface{
-				InterfaceName: method.MethodName + "Handler",
-				Methods:       []ParsedInterfaceMethod{method},
-			})
+			if method.MethodName != "NewError" {
+				genInfo.InterFaces = append(genInfo.InterFaces, SeparatedInterface{
+					InterfaceName: method.MethodName + "Handler",
+					Methods:       []ParsedInterfaceMethod{method},
+				})
+				readyParsedMethods = append(readyParsedMethods, method.MethodName)
+			}
 		}
 
 	case TagsProc:
-		tagMaps := make(map[string]SeparatedInterface)
-		for pathName, pathItem := range docModel.Model.Paths.PathItems {
+		tagMaps := make(map[string]*SeparatedInterface)
+		existsTags := make([]string, 0)
+		lo.Map(docModel.Model.Tags, func(tag *base.Tag, _ int) string {
+			existsTags = append(existsTags, tag.Name)
+			return tag.Name
+		})
+		for _, pathItem := range docModel.Model.Paths.PathItems {
 			for _, op := range pathItem.GetOperations() {
 				for _, tagName := range op.Tags {
-					if _, ok := tagMaps[tagName]; !ok {
-						tagMaps[tagName] = SeparatedInterface{
-							InterfaceName: strings.Join(lo.Map(strings.Split(pathName, "/"), func(item string, index int) string {
-								return strcase.ToCamel(item)
-							}), "") + "ServiceTag",
-							Methods: make([]ParsedInterfaceMethod, 0),
+					if _, ok := tagMaps[tagName]; !ok && lo.Contains(existsTags, tagName) {
+						tagMaps[tagName] = &SeparatedInterface{
+							InterfaceName: strcase.ToCamel(tagName) + "Service",
+							Methods:       make([]ParsedInterfaceMethod, 0),
 						}
-					}
-					for _, method := range inter.Methods {
-						if strings.Contains(method.Comment, op.OperationId) || method.MethodName == "NewError" {
-							sepInter := tagMaps[tagName]
-							sepInter.Methods = append(sepInter.Methods, method)
-							readyParsedMethods = append(readyParsedMethods, method.MethodName)
-						}
-					}
-					if item, ok := lo.Find(inter.Methods, func(item ParsedInterfaceMethod) bool {
-						return item.MethodName == "NewError"
-					}); ok {
-						sepInter := tagMaps[tagName]
-						sepInter.Methods = append(sepInter.Methods, item)
 					}
 				}
 			}
 		}
+		for _, pathItem := range docModel.Model.Paths.PathItems {
+			for _, op := range pathItem.GetOperations() {
+				for _, tagName := range op.Tags {
+					for tagNameP, sepInter := range tagMaps {
+						if tagNameP == tagName {
+							for _, method := range inter.Methods {
+								if strings.Contains(method.Comment, op.OperationId) && method.MethodName != "NewError" {
+									log.Debug().Msgf("tag: %s, method: %s, opname: %s, contains %s\n", tagName, method.MethodName, op.OperationId, strings.Contains(method.Comment, op.OperationId))
+									sepInter.Methods = append(sepInter.Methods, method)
+									readyParsedMethods = append(readyParsedMethods, method.MethodName)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		for _, sepInter := range tagMaps {
-			genInfo.InterFaces = append(genInfo.InterFaces, sepInter)
+			genInfo.InterFaces = append(genInfo.InterFaces, *sepInter)
 		}
 
 	case PathsProc:
@@ -107,26 +116,29 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 			}
 			for _, op := range pathItem.GetOperations() {
 				for _, method := range inter.Methods {
-					if strings.Contains(method.Comment, op.OperationId) {
+					if strings.Contains(method.Comment, op.OperationId) && method.MethodName != "NewError" {
 						sepInterface.Methods = append(sepInterface.Methods, method)
 						readyParsedMethods = append(readyParsedMethods, method.MethodName)
 					}
 				}
-
-			}
-			if item, ok := lo.Find(inter.Methods, func(item ParsedInterfaceMethod) bool {
-				return item.MethodName == "NewError"
-			}); ok {
-				sepInterface.Methods = append(sepInterface.Methods, item)
 			}
 			genInfo.InterFaces = append(genInfo.InterFaces, sepInterface)
 		}
 	}
 
+	if errHandle, ok := lo.Find(inter.Methods, func(item ParsedInterfaceMethod) bool {
+		return item.MethodName == "NewError"
+	}); ok {
+		genInfo.ErrorHandler = &errHandle
+	}
+	unmatchedMethods := make([]ParsedInterfaceMethod, 0)
 	for _, method := range lo.Uniq(inter.Methods) {
-		if !lo.Contains(readyParsedMethods, method.MethodName) {
-			genInfo.UnMatched.Methods = append(genInfo.UnMatched.Methods, method)
+		if !lo.Contains(readyParsedMethods, method.MethodName) && method.MethodName != "NewError" {
+			unmatchedMethods = append(unmatchedMethods, method)
 		}
+	}
+	if len(unmatchedMethods) != 0 {
+		genInfo.InterFaces = append(genInfo.InterFaces, SeparatedInterface{InterfaceName: "UnmatchedMethodsHandler", Methods: unmatchedMethods})
 	}
 	return genInfo, nil
 }
