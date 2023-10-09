@@ -39,7 +39,6 @@ func Run() int {
 		return 2
 	}
 
-	var info *GenInfo
 	var procType ProcessType
 	switch *SeparateBy {
 	case "each":
@@ -57,9 +56,8 @@ func Run() int {
 		log.Error().Err(procErr).Msg("failed process openapi file")
 		return 2
 	}
-	info = genData
 	if *Verbose {
-		res, err := PrettyStruct(info)
+		res, err := PrettyStruct(genData)
 		if err != nil {
 			log.Fatal().Err(err)
 		}
@@ -69,7 +67,7 @@ func Run() int {
 		*OutFile = path.Join(*OgenFolder, "oas_postgen_services_gen.go")
 	}
 	log.Info().Msgf("write to %s", *OutFile)
-	generateErr := Generate(*OutFile, info, *PackageName)
+	generateErr := Generate(*OutFile, genData, *PackageName)
 	if generateErr != nil {
 		log.Error().Err(generateErr).Msg("")
 		return 2

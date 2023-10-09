@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"fmt"
 	"github.com/go-faster/errors"
 	"github.com/iancoleman/strcase"
 	"github.com/pb33f/libopenapi"
@@ -8,6 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/samber/lo"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -28,6 +30,11 @@ type GenInfo struct {
 	Imports      []ImportInfo
 	InterFaces   []SeparatedInterface
 	ErrorHandler *ParsedInterfaceMethod
+}
+
+func match(method ParsedInterfaceMethod, target string) bool {
+	re := regexp.MustCompile(fmt.Sprintf(" %s ", target))
+	return re.MatchString(method.Comment) && method.MethodName != "NewError"
 }
 
 func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessType) (*GenInfo, error) {
@@ -72,9 +79,14 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 			existsTags = append(existsTags, tag.Name)
 			return tag.Name
 		})
+		tagsNamesMap := make(map[string][]string)
 		for _, pathItem := range docModel.Model.Paths.PathItems {
 			for _, op := range pathItem.GetOperations() {
 				for _, tagName := range op.Tags {
+					if _, ok := tagsNamesMap[tagName]; !ok {
+						tagsNamesMap[tagName] = make([]string, 0)
+					}
+					tagsNamesMap[tagName] = append(tagsNamesMap[tagName], op.OperationId)
 					if _, ok := tagMaps[tagName]; !ok && lo.Contains(existsTags, tagName) {
 						tagMaps[tagName] = &SeparatedInterface{
 							InterfaceName: strcase.ToCamel(tagName) + "Service",
@@ -84,23 +96,16 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 				}
 			}
 		}
-		for _, pathItem := range docModel.Model.Paths.PathItems {
-			for _, op := range pathItem.GetOperations() {
-				for _, tagName := range op.Tags {
-					for tagNameP, sepInter := range tagMaps {
-						if tagNameP == tagName {
-							for _, method := range inter.Methods {
-								if strings.Contains(method.Comment, op.OperationId) && method.MethodName != "NewError" {
-									sepInter.Methods = append(sepInter.Methods, method)
-									readyParsedMethods = append(readyParsedMethods, method.MethodName)
-								}
-							}
-						}
+		for tagName, pathOpIds := range tagsNamesMap {
+			for _, method := range inter.Methods {
+				for _, methodId := range pathOpIds {
+					if match(method, methodId) {
+						tagMaps[tagName].Methods = append(tagMaps[tagName].Methods, method)
+						readyParsedMethods = append(readyParsedMethods, method.MethodName)
 					}
 				}
 			}
 		}
-
 		for _, sepInter := range tagMaps {
 			genInfo.InterFaces = append(genInfo.InterFaces, *sepInter)
 		}
@@ -115,7 +120,7 @@ func ProcessOpenapi(filePath string, inter *ParsedInterface, procType ProcessTyp
 			}
 			for _, op := range pathItem.GetOperations() {
 				for _, method := range inter.Methods {
-					if strings.Contains(method.Comment, op.OperationId) && method.MethodName != "NewError" {
+					if match(method, op.OperationId) {
 						sepInterface.Methods = append(sepInterface.Methods, method)
 						readyParsedMethods = append(readyParsedMethods, method.MethodName)
 					}
